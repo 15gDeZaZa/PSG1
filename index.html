@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Creación y gestión de usuarios en Linux</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --bg:#0a0d10;
+  --bg-raised:#12161b;
+  --panel:#161c22;
+  --panel-2:#1b232b;
+  --border:#242e37;
+  --green:#39d972;
+  --green-dim:#1f7a44;
+  --blue:#4aa8ff;
+  --amber:#e8b339;
+  --red:#f4695a;
+  --text:#e9eef1;
+  --text-dim:#93a2ac;
+  --text-faint:#5c6b74;
+  --mono:'JetBrains Mono', monospace;
+  --head:'Space Grotesk', sans-serif;
+  --body:'IBM Plex Sans', sans-serif;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--body);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+::selection{ background:var(--green); color:#04120a; }
+::-webkit-scrollbar{ width:8px; height:8px;}
+::-webkit-scrollbar-thumb{ background:var(--border); border-radius:4px;}
+::-webkit-scrollbar-track{ background:transparent;}
+
+a{ color:inherit; }
+code, .mono{ font-family:var(--mono); }
+
+.crt-grid{
+  position:fixed; inset:0; z-index:0; pointer-events:none;
+  background-image:
+    linear-gradient(rgba(57,217,114,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(57,217,114,0.035) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 30%, transparent 90%);
+}
+
+/* ============ PROGRESS BAR ============ */
+#progress-track{
+  position:fixed; top:0; left:0; right:0; height:3px; z-index:60;
+  background:var(--border);
+}
+#progress-fill{
+  height:100%; width:0%;
+  background:linear-gradient(90deg, var(--green), var(--blue));
+  transition:width .4s cubic-bezier(.65,0,.35,1);
+}
+
+/* ============ SIDEBAR NAV ============ */
+#sidebar{
+  position:fixed; top:0; left:0; bottom:0; width:74px; z-index:50;
+  background:var(--panel);
+  border-right:1px solid var(--border);
+  display:flex; flex-direction:column; align-items:center;
+  padding:20px 0 16px;
+  gap:6px;
+}
+#sidebar .brand{
+  width:36px; height:36px; border-radius:9px;
+  background:var(--bg);
+  border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--green); font-size:16px; margin-bottom:18px;
+  flex-shrink:0;
+}
+#nav-dots{
+  flex:1; display:flex; flex-direction:column; gap:4px;
+  overflow-y:auto; width:100%; align-items:center;
+  padding:2px 0;
+}
+.nav-dot{
+  width:44px; height:38px;
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-faint);
+  background:transparent; border:none; cursor:pointer;
+  position:relative; border-radius:8px;
+  font-size:14px;
+  transition:color .2s ease, background .2s ease;
+}
+.nav-dot:hover{ color:var(--text); background:var(--panel-2); }
+.nav-dot.active{ color:var(--green); background:rgba(57,217,114,0.1); }
+.nav-dot.active::before{
+  content:''; position:absolute; left:-1px; top:8px; bottom:8px; width:3px;
+  background:var(--green); border-radius:2px;
+}
+.nav-dot .tip{
+  position:absolute; left:60px; top:50%; transform:translateY(-50%);
+  background:var(--bg-raised); border:1px solid var(--border);
+  color:var(--text); font-family:var(--body); font-size:12.5px;
+  padding:6px 10px; border-radius:6px; white-space:nowrap;
+  opacity:0; pointer-events:none; transition:opacity .15s ease;
+  box-shadow:0 6px 20px rgba(0,0,0,.4);
+}
+.nav-dot:hover .tip{ opacity:1; }
+#sidebar .count{
+  font-family:var(--mono); font-size:11px; color:var(--text-faint);
+  margin-top:10px;
+}
+
+/* ============ SLIDES ============ */
+#deck{
+  position:absolute; left:74px; right:0; top:0; bottom:0;
+  overflow:hidden;
+}
+.slide{
+  position:absolute; inset:0;
+  display:flex; flex-direction:column;
+  padding:56px 68px 88px;
+  opacity:0; visibility:hidden;
+  transform:translateY(14px);
+  transition:opacity .45s ease, transform .45s ease;
+  overflow-y:auto;
+  z-index:1;
+}
+.slide.active{
+  opacity:1; visibility:visible; transform:translateY(0);
+  z-index:2;
+}
+.slide-eyebrow{
+  font-family:var(--mono); font-size:12.5px; color:var(--green);
+  display:flex; align-items:center; gap:8px; margin-bottom:14px;
+}
+.slide-eyebrow .n{ color:var(--text-faint); }
+h1.slide-title{
+  font-family:var(--head); font-weight:700;
+  font-size:clamp(28px, 3.4vw, 46px);
+  line-height:1.08; letter-spacing:-0.01em;
+  margin-bottom:10px; max-width:900px;
+}
+.slide-sub{
+  color:var(--text-dim); font-size:16px; max-width:660px; line-height:1.55;
+  margin-bottom:22px;
+}
+.slide-body{ flex:1; min-height:0; }
+
+.two-col{ display:grid; grid-template-columns:1.05fr 1fr; gap:40px; align-items:start; }
+@media (max-width: 980px){ .two-col{ grid-template-columns:1fr; } }
+
+p.lead{ font-size:16px; line-height:1.65; color:var(--text); max-width:60ch; margin-bottom:14px; }
+p.lead b{ color:var(--green); font-weight:600; }
+
+.imgcard{
+  border-radius:14px; overflow:hidden; border:1px solid var(--border);
+  background:var(--panel); box-shadow:0 20px 50px -20px rgba(0,0,0,.6);
+}
+.imgcard img{ width:100%; display:block; max-height:340px; object-fit:cover; }
+.imgcard .credit{
+  font-family:var(--mono); font-size:11px; color:var(--text-faint);
+  padding:9px 14px; border-top:1px solid var(--border);
+}
+.imgcard .credit a{ color:var(--text-dim); text-decoration:none; }
+.imgcard .credit a:hover{ color:var(--green); }
+
+.tag{
+  display:inline-flex; align-items:center; gap:6px;
+  font-family:var(--mono); font-size:12.5px; color:var(--blue);
+  border:1px solid rgba(74,168,255,.35); background:rgba(74,168,255,.08);
+  padding:4px 10px; border-radius:99px;
+}
+
+.cmd{
+  font-family:var(--mono); background:#0d1117;
+  border:1px solid var(--border); color:var(--green);
+  padding:2px 8px; border-radius:6px; font-size:0.95em;
+}
+
+.codeblock{
+  font-family:var(--mono); font-size:14px; line-height:1.7;
+  background:#0d1117; border:1px solid var(--border); border-radius:10px;
+  padding:16px 18px; color:#c9d1d9; white-space:pre-wrap; word-break:break-word;
+}
+.codeblock .c1{ color:var(--green); }
+.codeblock .c2{ color:var(--blue); }
+.codeblock .c3{ color:var(--amber); }
+.codeblock .dim{ color:var(--text-faint); }
+
+/* ============ TERMINAL WINDOW ============ */
+.term-window{
+  background:#0d1117; border:1px solid var(--border); border-radius:12px;
+  overflow:hidden; box-shadow:0 24px 60px -24px rgba(0,0,0,.7);
+}
+.term-window.win{ background:#012456; }
+.term-titlebar{
+  display:flex; align-items:center; gap:8px;
+  background:#161b22; padding:9px 14px; border-bottom:1px solid var(--border);
+}
+.term-titlebar.win{ background:#e8edf2; border-bottom:1px solid #c7cfd6; }
+.term-titlebar.win .path{ color:#33393f; }
+.term-dot{ width:11px; height:11px; border-radius:50%; }
+.term-dot.r{ background:#f4695a; } .term-dot.y{ background:#e8b339; } .term-dot.g{ background:#39d972; }
+.term-titlebar .path{ flex:1; text-align:center; font-family:var(--mono); font-size:12px; color:var(--text-faint); }
+.term-body{
+  font-family:var(--mono); font-size:14px; line-height:1.75; color:#c9d1d9;
+  padding:16px 18px; min-height:120px; max-height:340px; overflow-y:auto;
+}
+.term-body.win{ color:#f2f2f2; }
+.term-body .prompt{ color:var(--green); }
+.term-body.win .prompt{ color:#e8e8e8; }
+.term-body .out{ color:#c9d1d9; }
+.term-body .out.ok{ color:var(--green); }
+.term-body .out.warn{ color:var(--amber); }
+.term-body.win .out.ok{ color:#7fd0ff; }
+.term-line{ display:flex; gap:6px; flex-wrap:wrap; }
+.term-cursor{
+  display:inline-block; width:8px; height:15px; background:var(--green);
+  vertical-align:middle; animation:blink 1s step-end infinite;
+}
+@keyframes blink{ 50%{ opacity:0; } }
+
+.term-buttons{ display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.btn{
+  font-family:var(--mono); font-size:13px; color:var(--text);
+  background:var(--panel-2); border:1px solid var(--border);
+  padding:8px 14px; border-radius:8px; cursor:pointer;
+  transition:border-color .15s ease, color .15s ease, transform .1s ease;
+}
+.btn:hover{ border-color:var(--green); color:var(--green); }
+.btn:active{ transform:scale(.97); }
+.btn.primary{
+  background:linear-gradient(180deg, rgba(57,217,114,.18), rgba(57,217,114,.06));
+  border-color:var(--green-dim); color:var(--green); font-weight:600;
+}
+.btn.primary:hover{ background:rgba(57,217,114,.22); }
+
+/* ============ OS TOGGLE ============ */
+.os-toggle-row{ display:flex; align-items:center; gap:16px; margin-bottom:16px; flex-wrap:wrap; }
+.os-mascot-frame{
+  width:64px; height:64px; border-radius:10px; overflow:hidden;
+  background:var(--panel); border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.os-mascot-frame img{ width:100%; height:100%; object-fit:contain; }
+.os-toggle{ display:inline-flex; gap:0; border:1px solid var(--border); border-radius:9px; padding:3px; background:var(--panel); margin-bottom:0; }
+.os-toggle .os-btn{
+  font-family:var(--head); font-weight:600; font-size:13px;
+  background:transparent; border:none; color:var(--text-dim);
+  padding:7px 16px; border-radius:6px; cursor:pointer; display:flex; align-items:center; gap:7px;
+  transition:all .15s ease;
+}
+.os-toggle .os-btn.active{ background:var(--panel-2); color:var(--green); }
+.os-toggle .os-btn.active[data-os="windows"]{ color:#4aa8ff; }
+.os-toggle .os-btn:hover{ color:var(--text); }
+.os-panel{ display:none; }
+.os-panel.active{ display:block; }
+
+/* ============ TABLE ============ */
+table.opts{ width:100%; border-collapse:collapse; font-size:14px; margin-top:6px; }
+table.opts th, table.opts td{ text-align:left; padding:10px 14px; border-bottom:1px solid var(--border); }
+table.opts th{ color:var(--text-dim); font-weight:500; font-family:var(--head); font-size:13px; }
+table.opts td:first-child{ font-family:var(--mono); color:var(--green); white-space:nowrap; }
+
+/* ============ WARNING BOX ============ */
+.warn-box{
+  display:flex; gap:12px; align-items:flex-start;
+  background:rgba(244,105,90,.08); border:1px solid rgba(244,105,90,.35);
+  border-radius:10px; padding:14px 16px; margin-top:16px;
+}
+.warn-box i{ color:var(--red); font-size:18px; margin-top:2px; }
+.warn-box .t{ font-size:14px; color:var(--text); line-height:1.5; }
+.note-box{
+  display:flex; gap:12px; align-items:flex-start;
+  background:rgba(74,168,255,.08); border:1px solid rgba(74,168,255,.3);
+  border-radius:10px; padding:14px 16px; margin-top:16px;
+}
+.note-box i{ color:var(--blue); font-size:16px; margin-top:2px; }
+.note-box .t{ font-size:13.5px; color:var(--text-dim); line-height:1.5; }
+
+/* ============ SUMMARY CARDS ============ */
+.summary-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+@media (max-width:1100px){ .summary-grid{ grid-template-columns:repeat(2,1fr);} }
+@media (max-width:640px){ .summary-grid{ grid-template-columns:1fr;} }
+.summary-card{
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  padding:18px; display:flex; flex-direction:column; gap:8px;
+}
+.summary-card i{ color:var(--green); font-size:18px; }
+.summary-card .k{ font-family:var(--mono); font-size:15px; color:var(--text); }
+.summary-card .v{ font-size:13px; color:var(--text-dim); }
+.summary-card .v2{ font-size:12px; color:var(--blue); font-family:var(--mono); }
+
+/* ============ QUIZ ============ */
+.quiz-card{ background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:28px 30px; max-width:640px; }
+.quiz-progress{ font-family:var(--mono); font-size:12.5px; color:var(--text-faint); margin-bottom:10px;}
+.quiz-q{ font-family:var(--head); font-weight:600; font-size:20px; margin-bottom:20px; }
+.quiz-opts{ display:flex; flex-direction:column; gap:10px; }
+.quiz-opt{
+  text-align:left; font-family:var(--body); font-size:15px; color:var(--text);
+  background:var(--bg-raised); border:1px solid var(--border); border-radius:9px;
+  padding:13px 16px; cursor:pointer; transition:all .15s ease;
+}
+.quiz-opt:hover{ border-color:var(--blue); }
+.quiz-opt.correct{ border-color:var(--green); background:rgba(57,217,114,.14); color:var(--green); }
+.quiz-opt.incorrect{ border-color:var(--red); background:rgba(244,105,90,.14); color:var(--red); }
+.quiz-opt.disabled{ pointer-events:none; }
+#quiz-score{ font-family:var(--mono); font-size:15px; color:var(--green); margin-top:18px; }
+.quiz-next{ margin-top:18px; }
+
+/* ============ FINAL SIM ============ */
+.sim-picker{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+
+/* ============ NAV ARROWS ============ */
+#arrows{ position:fixed; bottom:26px; right:36px; z-index:55; display:flex; gap:10px; align-items:center; }
+#arrows .arrow-btn{
+  width:46px; height:46px; border-radius:50%;
+  background:var(--panel); border:1px solid var(--border);
+  color:var(--text); display:flex; align-items:center; justify-content:center;
+  cursor:pointer; font-size:16px; transition:all .15s ease;
+}
+#arrows .arrow-btn:hover{ border-color:var(--green); color:var(--green); }
+#arrows .arrow-btn:disabled{ opacity:.3; pointer-events:none; }
+#slide-counter{ font-family:var(--mono); font-size:12.5px; color:var(--text-faint); margin-right:6px; }
+
+button:focus-visible, .quiz-opt:focus-visible{ outline:2px solid var(--blue); outline-offset:2px; }
+
+@media (prefers-reduced-motion: reduce){ .slide{ transition:none; } .term-cursor{ animation:none; } }
+
+@media (max-width:720px){
+  #sidebar{ width:0; overflow:hidden; border:none; }
+  #deck{ left:0; }
+  .slide{ padding:80px 22px 90px; }
+  .two-col{ grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="crt-grid"></div>
+<div id="progress-track"><div id="progress-fill"></div></div>
+
+<nav id="sidebar">
+  <div class="brand"><i class="fa-brands fa-linux"></i></div>
+  <div id="nav-dots"></div>
+  <div class="count"><span id="dot-count">1</span>/<span id="dot-total">8</span></div>
+</nav>
+
+<main id="deck">
+
+  <!-- 1. PORTADA -->
+  <section class="slide" data-title="Portada" data-icon="fa-solid fa-terminal">
+    <div class="slide-body" style="display:flex; flex-direction:column; justify-content:center; height:100%;">
+      <div class="two-col" style="align-items:center;">
+        <div>
+          <div class="slide-eyebrow"><i class="fa-brands fa-linux"></i> Administración de sistemas</div>
+          <h1 class="slide-title">Creación y gestión de usuarios en Linux</h1>
+          <p class="slide-sub">Administración de usuarios, UID, directorios y shells.</p>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <span class="tag"><i class="fa-solid fa-user"></i> useradd</span>
+            <span class="tag"><i class="fa-solid fa-user-pen"></i> usermod</span>
+            <span class="tag"><i class="fa-solid fa-user-xmark"></i> userdel</span>
+            <span class="tag"><i class="fa-brands fa-windows"></i> equivalentes en Windows</span>
+          </div>
+        </div>
+        <div class="imgcard">
+          <img src="https://commons.wikimedia.org/wiki/Special:FilePath/Tux.svg" alt="Tux, la mascota de Linux" style="background:#fff; padding:24px; max-height:300px; object-fit:contain;">
+          <div class="credit">Tux, mascota oficial de Linux · Wikimedia Commons · <a href="https://commons.wikimedia.org/wiki/File:Tux.svg" target="_blank">Larry Ewing / dominio público</a></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 (antes 3). SIMULADOR TERMINAL INTRO -->
+  <section class="slide" data-title="Simulador de terminal" data-icon="fa-solid fa-square-terminal">
+    <div class="slide-eyebrow"><span class="n">02</span> Práctica guiada</div>
+    <h1 class="slide-title" id="title-intro">Simulador de terminal</h1>
+    <p class="slide-sub">Elegí un comando y pulsá "Ejecutar" para ver una salida simulada. <b style="color:var(--text)">No se ejecuta nada real</b>: todo ocurre en JavaScript.</p>
+    <div class="slide-body">
+      <div class="os-toggle-row">
+        <div class="os-toggle" data-group="intro">
+          <button class="os-btn active" data-os="linux"><i class="fa-brands fa-linux"></i> Linux</button>
+          <button class="os-btn" data-os="windows"><i class="fa-brands fa-windows"></i> Windows</button>
+        </div>
+        <div class="os-mascot-frame"><img id="mascot-intro" src="gifs/linux-tux-typing.gif" alt="Tux escribiendo en la computadora"></div>
+      </div>
+
+      <div class="os-panel active" data-group="intro" data-os="linux">
+        <div class="term-window" style="max-width:760px;">
+          <div class="term-titlebar"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">theo@linux: ~</div></div>
+          <div class="term-body" id="term-intro-linux"></div>
+        </div>
+        <div class="term-buttons">
+          <button class="btn primary" data-cmd="intro-linux-whoami">whoami</button>
+          <button class="btn" data-cmd="intro-linux-pwd">pwd</button>
+          <button class="btn" data-cmd="intro-linux-id">id</button>
+          <button class="btn" data-cmd="intro-linux-clear">limpiar terminal</button>
+        </div>
+      </div>
+
+      <div class="os-panel" data-group="intro" data-os="windows">
+        <div class="term-window win" style="max-width:760px;">
+          <div class="term-titlebar win"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">Windows PowerShell</div></div>
+          <div class="term-body win" id="term-intro-windows"></div>
+        </div>
+        <div class="term-buttons">
+          <button class="btn primary" data-cmd="intro-win-whoami">whoami</button>
+          <button class="btn" data-cmd="intro-win-pwd">Get-Location</button>
+          <button class="btn" data-cmd="intro-win-id">whoami /groups</button>
+          <button class="btn" data-cmd="intro-win-clear">limpiar terminal</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3 (antes 4). USERADD -->
+  <section class="slide" data-title="useradd" data-icon="fa-solid fa-user-plus">
+    <div class="slide-eyebrow"><span class="n">03</span> Crear usuarios</div>
+    <h1 class="slide-title">Comando <span class="mono" id="title-useradd">useradd</span></h1>
+    <p class="slide-sub"><span class="cmd">useradd</span> permite crear un nuevo usuario en el sistema.</p>
+
+    <div class="os-toggle-row">
+      <div class="os-toggle" data-group="useradd">
+        <button class="os-btn active" data-os="linux"><i class="fa-brands fa-linux"></i> Linux</button>
+        <button class="os-btn" data-os="windows"><i class="fa-brands fa-windows"></i> Windows</button>
+      </div>
+      <div class="os-mascot-frame"><img id="mascot-useradd" src="gifs/linux-tux-standing.gif" alt="Tux, el pingüino de Linux"></div>
+    </div>
+
+    <div class="slide-body">
+      <div class="os-panel active" data-group="useradd" data-os="linux">
+        <div class="two-col">
+          <div>
+            <div class="codeblock">sudo useradd <span class="c2">usuario</span>
+<span class="dim"># ejemplo</span>
+sudo useradd <span class="c1">theo</span>
+<span class="dim"># crear también su directorio home</span>
+sudo useradd <span class="c3">-m</span> <span class="c1">theo</span></div>
+            <p class="lead" style="margin-top:16px;"><span class="cmd">-m</span> crea automáticamente el directorio home del nuevo usuario.</p>
+            <table class="opts">
+              <tr><th>Opción</th><th>Función</th></tr>
+              <tr><td>-m</td><td>Crear directorio home</td></tr>
+              <tr><td>-s</td><td>Elegir shell</td></tr>
+              <tr><td>-u</td><td>Elegir UID</td></tr>
+            </table>
+          </div>
+          <div>
+            <div class="term-window">
+              <div class="term-titlebar"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">theo@linux: ~</div></div>
+              <div class="term-body" id="term-useradd-linux"></div>
+            </div>
+            <div class="term-buttons"><button class="btn primary" data-cmd="useradd-linux-run">Ejecutar sudo useradd -m estudiante</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="os-panel" data-group="useradd" data-os="windows">
+        <div class="two-col">
+          <div>
+            <div class="codeblock">New-LocalUser <span class="c2">"usuario"</span>
+<span class="dim"># ejemplo, sin contraseña</span>
+New-LocalUser <span class="c1">"theo"</span> -NoPassword
+<span class="dim"># el perfil / carpeta personal</span>
+<span class="dim"># se crea automáticamente al iniciar sesión</span></div>
+            <p class="lead" style="margin-top:16px;">Windows crea la carpeta del perfil (<span class="cmd">C:\Users\usuario</span>) automáticamente la primera vez que el usuario inicia sesión, a diferencia de Linux donde se pide con <span class="cmd">-m</span>.</p>
+            <table class="opts">
+              <tr><th>Parámetro</th><th>Función</th></tr>
+              <tr><td>-NoPassword</td><td>Crear sin contraseña</td></tr>
+              <tr><td>-FullName</td><td>Nombre completo</td></tr>
+              <tr><td>-Description</td><td>Descripción de la cuenta</td></tr>
+            </table>
+          </div>
+          <div>
+            <div class="term-window win">
+              <div class="term-titlebar win"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">Windows PowerShell</div></div>
+              <div class="term-body win" id="term-useradd-windows"></div>
+            </div>
+            <div class="term-buttons"><button class="btn primary" data-cmd="useradd-win-run">Ejecutar New-LocalUser "estudiante" -NoPassword</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 (antes 5). USERMOD -->
+  <section class="slide" data-title="usermod" data-icon="fa-solid fa-user-pen">
+    <div class="slide-eyebrow"><span class="n">04</span> Modificar usuarios</div>
+    <h1 class="slide-title">Comando <span class="mono" id="title-usermod">usermod</span></h1>
+    <p class="slide-sub"><span class="cmd">usermod</span> permite modificar usuarios ya existentes: nombre, shell o grupos.</p>
+
+    <div class="os-toggle-row">
+      <div class="os-toggle" data-group="usermod">
+        <button class="os-btn active" data-os="linux"><i class="fa-brands fa-linux"></i> Linux</button>
+        <button class="os-btn" data-os="windows"><i class="fa-brands fa-windows"></i> Windows</button>
+      </div>
+      <div class="os-mascot-frame"><img id="mascot-usermod" src="gifs/linux-tux-soda.gif" alt="Tux tomando una lata de gaseosa"></div>
+    </div>
+
+    <div class="slide-body">
+      <div class="os-panel active" data-group="usermod" data-os="linux">
+        <div class="two-col">
+          <div>
+            <div class="codeblock"><span class="dim"># cambiar nombre</span>
+sudo usermod -l <span class="c2">nuevo_nombre</span> usuario
+
+<span class="dim"># cambiar shell</span>
+sudo usermod -s <span class="c1">/bin/bash</span> usuario
+
+<span class="dim"># agregar a un grupo</span>
+sudo usermod -aG <span class="c3">sudo</span> usuario</div>
+          </div>
+          <div>
+            <div class="term-window">
+              <div class="term-titlebar"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">theo@linux: ~</div></div>
+              <div class="term-body" id="term-usermod-linux"></div>
+            </div>
+            <div class="term-buttons">
+              <button class="btn primary" data-cmd="usermod-linux-shell">Cambiar shell</button>
+              <button class="btn" data-cmd="usermod-linux-name">Cambiar nombre</button>
+              <button class="btn" data-cmd="usermod-linux-group">Agregar a grupo sudo</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="os-panel" data-group="usermod" data-os="windows">
+        <div class="two-col">
+          <div>
+            <div class="codeblock"><span class="dim"># cambiar nombre</span>
+Rename-LocalUser -Name <span class="c2">"usuario"</span> -NewName <span class="c2">"nuevo_nombre"</span>
+
+<span class="dim"># Windows no tiene "shell" configurable</span>
+<span class="dim"># igual que en Linux; lo más parecido es</span>
+<span class="dim"># cambiar la consola por defecto en Windows Terminal</span>
+
+<span class="dim"># agregar a un grupo (equivalente a sudo)</span>
+Add-LocalGroupMember -Group <span class="c3">"Administradores"</span> -Member <span class="c2">"usuario"</span></div>
+            <div class="note-box"><i class="fa-solid fa-circle-info"></i><div class="t">Windows no tiene un concepto idéntico de "shell de usuario"; el grupo <span class="cmd">Administradores</span> cumple un rol parecido al grupo <span class="cmd">sudo</span> de Linux.</div></div>
+          </div>
+          <div>
+            <div class="term-window win">
+              <div class="term-titlebar win"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">Windows PowerShell</div></div>
+              <div class="term-body win" id="term-usermod-windows"></div>
+            </div>
+            <div class="term-buttons">
+              <button class="btn primary" data-cmd="usermod-win-name">Cambiar nombre</button>
+              <button class="btn" data-cmd="usermod-win-group">Agregar a Administradores</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 (antes 6). USERDEL -->
+  <section class="slide" data-title="userdel" data-icon="fa-solid fa-user-xmark">
+    <div class="slide-eyebrow"><span class="n">05</span> Eliminar usuarios</div>
+    <h1 class="slide-title">Comando <span class="mono" id="title-userdel">userdel</span></h1>
+    <p class="slide-sub"><span class="cmd">userdel</span> elimina una cuenta de usuario del sistema.</p>
+
+    <div class="os-toggle-row">
+      <div class="os-toggle" data-group="userdel">
+        <button class="os-btn active" data-os="linux"><i class="fa-brands fa-linux"></i> Linux</button>
+        <button class="os-btn" data-os="windows"><i class="fa-brands fa-windows"></i> Windows</button>
+      </div>
+      <div class="os-mascot-frame"><img id="mascot-userdel" src="gifs/linux-tux-bsod.gif" alt="Tux junto a una pantalla de error"></div>
+    </div>
+
+    <div class="slide-body">
+      <div class="os-panel active" data-group="userdel" data-os="linux">
+        <div class="two-col">
+          <div>
+            <div class="codeblock">sudo userdel <span class="c2">estudiante</span>
+
+<span class="dim"># elimina también el directorio home</span>
+sudo userdel <span class="c3">-r</span> <span class="c2">estudiante</span></div>
+            <div class="warn-box"><i class="fa-solid fa-triangle-exclamation"></i><div class="t"><span class="cmd">-r</span> elimina también el directorio home. Cuidado: puede borrar archivos personales del usuario.</div></div>
+          </div>
+          <div>
+            <div class="term-window">
+              <div class="term-titlebar"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">theo@linux: ~</div></div>
+              <div class="term-body" id="term-userdel-linux"></div>
+            </div>
+            <div class="term-buttons"><button class="btn primary" data-cmd="userdel-linux-run">Ejecutar sudo userdel -r estudiante</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="os-panel" data-group="userdel" data-os="windows">
+        <div class="two-col">
+          <div>
+            <div class="codeblock">Remove-LocalUser -Name <span class="c2">"estudiante"</span>
+
+<span class="dim"># Windows NO borra la carpeta de perfil sola:</span>
+Remove-Item -Recurse -Force <span class="c1">"C:\Users\estudiante"</span></div>
+            <div class="warn-box"><i class="fa-solid fa-triangle-exclamation"></i><div class="t">A diferencia de Linux con <span class="cmd">-r</span>, en Windows hay que borrar la carpeta del perfil en un paso aparte con <span class="cmd">Remove-Item</span>.</div></div>
+          </div>
+          <div>
+            <div class="term-window win">
+              <div class="term-titlebar win"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">Windows PowerShell</div></div>
+              <div class="term-body win" id="term-userdel-windows"></div>
+            </div>
+            <div class="term-buttons"><button class="btn primary" data-cmd="userdel-win-run">Ejecutar Remove-LocalUser "estudiante"</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 (antes 12). SIMULADOR INTERACTIVO FINAL -->
+  <section class="slide" data-title="Simulador final" data-icon="fa-solid fa-gears">
+    <div class="slide-eyebrow"><span class="n">06</span> Práctica libre</div>
+    <h1 class="slide-title" id="title-final">Simulador interactivo</h1>
+    <p class="slide-sub">Elegí un comando, se escribirá solo en la terminal, y pulsá "EJECUTAR" para ver la respuesta simulada.</p>
+
+    <div class="os-toggle-row">
+      <div class="os-toggle" data-group="final">
+        <button class="os-btn active" data-os="linux"><i class="fa-brands fa-linux"></i> Linux</button>
+        <button class="os-btn" data-os="windows"><i class="fa-brands fa-windows"></i> Windows</button>
+      </div>
+      <div class="os-mascot-frame"><img id="mascot-final" src="gifs/linux-tux-typing.gif" alt="Tux escribiendo en la computadora"></div>
+    </div>
+
+    <div class="slide-body">
+      <div class="os-panel active" data-group="final" data-os="linux">
+        <div class="sim-picker">
+          <button class="btn" data-sim="linux-useradd">useradd</button>
+          <button class="btn" data-sim="linux-usermod">usermod</button>
+          <button class="btn" data-sim="linux-userdel">userdel</button>
+          <button class="btn" data-sim="linux-passwd">cat /etc/passwd</button>
+          <button class="btn" data-sim="linux-shell">echo $SHELL</button>
+          <button class="btn" data-sim="linux-id">id</button>
+        </div>
+        <div class="term-window" style="max-width:760px;">
+          <div class="term-titlebar"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">theo@linux: ~</div></div>
+          <div class="term-body" id="term-final-linux"><div class="term-line"><span class="prompt">theo@linux:~$</span> <span class="term-cursor"></span></div></div>
+        </div>
+        <div class="term-buttons"><button class="btn primary" data-run="linux">EJECUTAR</button></div>
+      </div>
+
+      <div class="os-panel" data-group="final" data-os="windows">
+        <div class="sim-picker">
+          <button class="btn" data-sim="win-useradd">New-LocalUser</button>
+          <button class="btn" data-sim="win-usermod">Add-LocalGroupMember</button>
+          <button class="btn" data-sim="win-userdel">Remove-LocalUser</button>
+          <button class="btn" data-sim="win-passwd">Get-LocalUser</button>
+          <button class="btn" data-sim="win-shell">$PSVersionTable</button>
+          <button class="btn" data-sim="win-id">whoami /groups</button>
+        </div>
+        <div class="term-window win" style="max-width:760px;">
+          <div class="term-titlebar win"><div class="term-dot r"></div><div class="term-dot y"></div><div class="term-dot g"></div><div class="path">Windows PowerShell</div></div>
+          <div class="term-body win" id="term-final-windows"><div class="term-line"><span class="prompt">PS C:\Users\Theo&gt;</span> <span class="term-cursor"></span></div></div>
+        </div>
+        <div class="term-buttons"><button class="btn primary" data-run="windows">EJECUTAR</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 (antes 13). QUIZ -->
+  <section class="slide" data-title="Mini quiz" data-icon="fa-solid fa-circle-question">
+    <div class="slide-eyebrow"><span class="n">07</span> Autoevaluación</div>
+    <h1 class="slide-title">Mini ejercicio interactivo</h1>
+    <p class="slide-sub">Tres preguntas rápidas para repasar lo visto.</p>
+    <div class="slide-body">
+      <div class="quiz-card" id="quiz-card"></div>
+    </div>
+  </section>
+
+  <!-- 8 (antes 14). RESUMEN -->
+  <section class="slide" data-title="Resumen" data-icon="fa-solid fa-flag-checkered">
+    <div class="slide-eyebrow"><span class="n">08</span> Cierre</div>
+    <h1 class="slide-title">Resumen</h1>
+    <div class="slide-body">
+      <div class="summary-grid">
+        <div class="summary-card"><i class="fa-solid fa-user-plus"></i><div class="k">useradd</div><div class="v">Crear usuarios.</div><div class="v2">Windows: New-LocalUser</div></div>
+        <div class="summary-card"><i class="fa-solid fa-user-pen"></i><div class="k">usermod</div><div class="v">Modificar usuarios.</div><div class="v2">Windows: Set/Rename-LocalUser</div></div>
+        <div class="summary-card"><i class="fa-solid fa-user-xmark"></i><div class="k">userdel</div><div class="v">Eliminar usuarios.</div><div class="v2">Windows: Remove-LocalUser</div></div>
+        <div class="summary-card"><i class="fa-solid fa-square-terminal"></i><div class="k">Simulador</div><div class="v">Práctica sin riesgo.</div><div class="v2">Linux y Windows</div></div>
+      </div>
+      <h1 class="slide-title" style="margin-top:46px; font-size:clamp(30px,4vw,54px); color:var(--green);">Gracias</h1>
+    </div>
+  </section>
+
+</main>
+
+<div id="arrows">
+  <span id="slide-counter">1 / 8</span>
+  <button class="arrow-btn" id="prev-btn" aria-label="Diapositiva anterior"><i class="fa-solid fa-arrow-left"></i></button>
+  <button class="arrow-btn" id="next-btn" aria-label="Siguiente diapositiva"><i class="fa-solid fa-arrow-right"></i></button>
+</div>
+
+<script>
+/* ======================================================
+   NAVEGACIÓN DE DIAPOSITIVAS
+   ====================================================== */
+const slides = Array.from(document.querySelectorAll('.slide'));
+const total = slides.length;
+let current = 0;
+
+const navDots = document.getElementById('nav-dots');
+slides.forEach((s, i) => {
+  const btn = document.createElement('button');
+  btn.className = 'nav-dot';
+  btn.innerHTML = `<i class="${s.dataset.icon}"></i><span class="tip">${i+1}. ${s.dataset.title}</span>`;
+  btn.addEventListener('click', () => goTo(i));
+  navDots.appendChild(btn);
+});
+document.getElementById('dot-total').textContent = total;
+const dotEls = Array.from(navDots.children);
+
+function goTo(i){
+  if(i < 0 || i >= total) return;
+  slides[current].classList.remove('active');
+  dotEls[current].classList.remove('active');
+  current = i;
+  slides[current].classList.add('active');
+  dotEls[current].classList.add('active');
+  document.getElementById('progress-fill').style.width = ((current+1)/total*100) + '%';
+  document.getElementById('slide-counter').textContent = (current+1) + ' / ' + total;
+  document.getElementById('dot-count').textContent = current+1;
+  document.getElementById('prev-btn').disabled = current === 0;
+  document.getElementById('next-btn').disabled = current === total-1;
+  dotEls[current].scrollIntoView({block:'nearest'});
+}
+
+document.getElementById('prev-btn').addEventListener('click', () => goTo(current-1));
+document.getElementById('next-btn').addEventListener('click', () => goTo(current+1));
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'ArrowRight' || e.key === 'PageDown'){ goTo(current+1); }
+  if(e.key === 'ArrowLeft' || e.key === 'PageUp'){ goTo(current-1); }
+});
+goTo(0);
+
+/* ======================================================
+   TOGGLE LINUX / WINDOWS (reutilizable por sección)
+   ====================================================== */
+/* Título que debe mostrarse en cada sección según el sistema activo */
+const titleByGroup = {
+  intro:   { linux: 'Simulador de terminal', windows: 'Simulador de PowerShell' },
+  useradd: { linux: 'useradd', windows: 'New-LocalUser' },
+  usermod: { linux: 'usermod', windows: 'Rename-LocalUser' },
+  userdel: { linux: 'userdel', windows: 'Remove-LocalUser' },
+  final:   { linux: 'Simulador interactivo · Linux', windows: 'Simulador interactivo · Windows' }
+};
+
+/* Gif mascota que debe mostrarse en cada sección según el sistema activo */
+const mascotByGroup = {
+  intro:   { linux: {src:'gifs/linux-tux-typing.gif',   alt:'Tux escribiendo en la computadora'}, windows: {src:'gifs/windows95-flag.gif',  alt:'Bandera animada de Windows 95'} },
+  useradd: { linux: {src:'gifs/linux-tux-standing.gif', alt:'Tux, el pingüino de Linux'},          windows: {src:'gifs/windows-xp-boot.gif', alt:'Pantalla de inicio de Windows XP'} },
+  usermod: { linux: {src:'gifs/linux-tux-soda.gif',      alt:'Tux tomando una lata de gaseosa'},    windows: {src:'gifs/windows-clippy.gif',  alt:'Clippy, el asistente de Office'} },
+  userdel: { linux: {src:'gifs/linux-tux-bsod.gif',      alt:'Tux junto a una pantalla de error'},  windows: {src:'gifs/windows95-flag.gif',  alt:'Bandera animada de Windows 95'} },
+  final:   { linux: {src:'gifs/linux-tux-typing.gif',   alt:'Tux escribiendo en la computadora'},  windows: {src:'gifs/windows-xp-boot.gif', alt:'Pantalla de inicio de Windows XP'} }
+};
+
+document.querySelectorAll('.os-toggle').forEach(toggle => {
+  const group = toggle.dataset.group;
+  const titleEl = document.getElementById('title-' + group);
+  const mascotEl = document.getElementById('mascot-' + group);
+  toggle.querySelectorAll('.os-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const os = btn.dataset.os;
+      toggle.querySelectorAll('.os-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll(`.os-panel[data-group="${group}"]`).forEach(panel => {
+        panel.classList.toggle('active', panel.dataset.os === os);
+      });
+      if(titleEl && titleByGroup[group]){
+        titleEl.textContent = titleByGroup[group][os];
+      }
+      if(mascotEl && mascotByGroup[group]){
+        mascotEl.src = mascotByGroup[group][os].src;
+        mascotEl.alt = mascotByGroup[group][os].alt;
+      }
+    });
+  });
+});
+
+/* ======================================================
+   HELPERS DE TERMINAL SIMULADA
+   ====================================================== */
+function appendLine(containerId, html){
+  const el = document.getElementById(containerId);
+  const line = document.createElement('div');
+  line.className = 'term-line';
+  line.innerHTML = html;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function clearTerm(containerId){ document.getElementById(containerId).innerHTML = ''; }
+
+document.querySelectorAll('[data-cmd]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cmd = btn.dataset.cmd;
+    switch(cmd){
+      /* --- Slide 2: simulador intro, Linux --- */
+      case 'intro-linux-whoami':
+        appendLine('term-intro-linux', '<span class="prompt">theo@linux:~$</span> whoami');
+        appendLine('term-intro-linux', '<span class="out">theo</span>');
+        break;
+      case 'intro-linux-pwd':
+        appendLine('term-intro-linux', '<span class="prompt">theo@linux:~$</span> pwd');
+        appendLine('term-intro-linux', '<span class="out">/home/theo</span>');
+        break;
+      case 'intro-linux-id':
+        appendLine('term-intro-linux', '<span class="prompt">theo@linux:~$</span> id');
+        appendLine('term-intro-linux', '<span class="out">uid=1000(theo) gid=1000(theo) groups=1000(theo),27(sudo)</span>');
+        break;
+      case 'intro-linux-clear':
+        clearTerm('term-intro-linux');
+        break;
+
+      /* --- Slide 2: simulador intro, Windows --- */
+      case 'intro-win-whoami':
+        appendLine('term-intro-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> whoami');
+        appendLine('term-intro-windows', '<span class="out">desktop-pc\\theo</span>');
+        break;
+      case 'intro-win-pwd':
+        appendLine('term-intro-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> Get-Location');
+        appendLine('term-intro-windows', '<span class="out">Path: C:\\Users\\Theo</span>');
+        break;
+      case 'intro-win-id':
+        appendLine('term-intro-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> whoami /groups');
+        appendLine('term-intro-windows', '<span class="out">BUILTIN\\Usuarios  BUILTIN\\Administradores</span>');
+        break;
+      case 'intro-win-clear':
+        clearTerm('term-intro-windows');
+        break;
+
+      /* --- Slide 3: useradd --- */
+      case 'useradd-linux-run':
+        clearTerm('term-useradd-linux');
+        appendLine('term-useradd-linux', '<span class="prompt">theo@linux:~$</span> sudo useradd -m estudiante');
+        appendLine('term-useradd-linux', '<span class="out ok">Usuario "estudiante" creado correctamente.</span>');
+        appendLine('term-useradd-linux', '<span class="out">Directorio creado:</span>');
+        appendLine('term-useradd-linux', '<span class="out ok">/home/estudiante</span>');
+        break;
+      case 'useradd-win-run':
+        clearTerm('term-useradd-windows');
+        appendLine('term-useradd-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> New-LocalUser "estudiante" -NoPassword');
+        appendLine('term-useradd-windows', '<span class="out ok">Name       Enabled  Description</span>');
+        appendLine('term-useradd-windows', '<span class="out ok">estudiante  True</span>');
+        appendLine('term-useradd-windows', '<span class="out">La carpeta C:\\Users\\estudiante se crea al primer inicio de sesión.</span>');
+        break;
+
+      /* --- Slide 4: usermod --- */
+      case 'usermod-linux-shell':
+        clearTerm('term-usermod-linux');
+        appendLine('term-usermod-linux', '<span class="prompt">theo@linux:~$</span> sudo usermod -s /bin/bash estudiante');
+        appendLine('term-usermod-linux', '<span class="out">Shell actualizado:</span>');
+        appendLine('term-usermod-linux', '<span class="out ok">/bin/bash</span>');
+        break;
+      case 'usermod-linux-name':
+        clearTerm('term-usermod-linux');
+        appendLine('term-usermod-linux', '<span class="prompt">theo@linux:~$</span> sudo usermod -l alumno estudiante');
+        appendLine('term-usermod-linux', '<span class="out">Nombre actualizado:</span>');
+        appendLine('term-usermod-linux', '<span class="out ok">estudiante → alumno</span>');
+        break;
+      case 'usermod-linux-group':
+        clearTerm('term-usermod-linux');
+        appendLine('term-usermod-linux', '<span class="prompt">theo@linux:~$</span> sudo usermod -aG sudo estudiante');
+        appendLine('term-usermod-linux', '<span class="out ok">Usuario agregado al grupo "sudo".</span>');
+        break;
+      case 'usermod-win-name':
+        clearTerm('term-usermod-windows');
+        appendLine('term-usermod-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> Rename-LocalUser -Name "estudiante" -NewName "alumno"');
+        appendLine('term-usermod-windows', '<span class="out ok">Nombre actualizado: estudiante → alumno</span>');
+        break;
+      case 'usermod-win-group':
+        clearTerm('term-usermod-windows');
+        appendLine('term-usermod-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> Add-LocalGroupMember -Group "Administradores" -Member "estudiante"');
+        appendLine('term-usermod-windows', '<span class="out ok">Usuario agregado al grupo "Administradores".</span>');
+        break;
+
+      /* --- Slide 5: userdel --- */
+      case 'userdel-linux-run':
+        clearTerm('term-userdel-linux');
+        appendLine('term-userdel-linux', '<span class="prompt">theo@linux:~$</span> sudo userdel -r estudiante');
+        appendLine('term-userdel-linux', '<span class="out dim">ANTES: /home/estudiante</span>');
+        appendLine('term-userdel-linux', '<span class="out warn">Usuario eliminado.</span>');
+        appendLine('term-userdel-linux', '<span class="out warn">DESPUÉS: /home/estudiante eliminado</span>');
+        break;
+      case 'userdel-win-run':
+        clearTerm('term-userdel-windows');
+        appendLine('term-userdel-windows', '<span class="prompt">PS C:\\Users\\Theo&gt;</span> Remove-LocalUser -Name "estudiante"');
+        appendLine('term-userdel-windows', '<span class="out warn">Cuenta "estudiante" eliminada.</span>');
+        appendLine('term-userdel-windows', '<span class="out dim">C:\\Users\\estudiante todavía existe, hay que borrarla aparte.</span>');
+        break;
+    }
+  });
+});
+
+/* ======================================================
+   SLIDE 6: simulador interactivo final
+   ====================================================== */
+const simCommands = {
+  'linux-useradd': { cmd: 'sudo useradd -m alumno', out: ['Creando usuario alumno...', 'Creando directorio /home/alumno...', 'Usuario creado correctamente.'] },
+  'linux-usermod': { cmd: 'sudo usermod -aG sudo alumno', out: ['Modificando usuario alumno...', 'Usuario agregado al grupo "sudo".'] },
+  'linux-userdel': { cmd: 'sudo userdel -r alumno', out: ['Eliminando usuario alumno...', 'Directorio /home/alumno eliminado.', 'Usuario eliminado correctamente.'] },
+  'linux-passwd': { cmd: 'cat /etc/passwd', out: ['root:x:0:0:root:/root:/bin/bash', 'theo:x:1000:1000:Theo Diaz:/home/theo:/bin/bash', 'alumno:x:1002:1002:Alumno Demo:/home/alumno:/bin/bash'] },
+  'linux-shell': { cmd: 'echo $SHELL', out: ['/bin/bash'] },
+  'linux-id': { cmd: 'id alumno', out: ['uid=1002(alumno) gid=1002(alumno) groups=1002(alumno)'] },
+
+  'win-useradd': { cmd: 'New-LocalUser "alumno" -NoPassword', out: ['Creando usuario alumno...', 'Name    Enabled', 'alumno   True'] },
+  'win-usermod': { cmd: 'Add-LocalGroupMember -Group "Administradores" -Member "alumno"', out: ['Usuario agregado al grupo "Administradores".'] },
+  'win-userdel': { cmd: 'Remove-LocalUser -Name "alumno"', out: ['Cuenta "alumno" eliminada.', 'Carpeta de perfil pendiente de borrado manual.'] },
+  'win-passwd': { cmd: 'Get-LocalUser', out: ['Name      Enabled  Description', 'theo       True', 'alumno     True'] },
+  'win-shell': { cmd: '$PSVersionTable.PSVersion', out: ['Major  Minor', '7      4'] },
+  'win-id': { cmd: 'whoami /groups', out: ['BUILTIN\\Usuarios         Grupo habilitado', 'BUILTIN\\Administradores  Grupo habilitado'] },
+};
+const selectedSim = { linux: null, windows: null };
+document.querySelectorAll('[data-sim]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const key = btn.dataset.sim;
+    const os = key.startsWith('win-') ? 'windows' : 'linux';
+    const group = btn.closest('.os-panel');
+    group.querySelectorAll('[data-sim]').forEach(b => b.classList.remove('primary'));
+    btn.classList.add('primary');
+    selectedSim[os] = key;
+    const termId = os === 'linux' ? 'term-final-linux' : 'term-final-windows';
+    const prompt = os === 'linux' ? 'theo@linux:~$' : 'PS C:\\Users\\Theo&gt;';
+    document.getElementById(termId).innerHTML = `<div class="term-line"><span class="prompt">${prompt}</span> ${simCommands[key].cmd} <span class="term-cursor"></span></div>`;
+  });
+});
+document.querySelectorAll('[data-run]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const os = btn.dataset.run;
+    const key = selectedSim[os];
+    if(!key) return;
+    const termId = os === 'linux' ? 'term-final-linux' : 'term-final-windows';
+    const prompt = os === 'linux' ? 'theo@linux:~$' : 'PS C:\\Users\\Theo&gt;';
+    document.getElementById(termId).innerHTML = `<div class="term-line"><span class="prompt">${prompt}</span> ${simCommands[key].cmd}</div>`;
+    simCommands[key].out.forEach(line => appendLine(termId, `<span class="out ok">${line}</span>`));
+  });
+});
+
+/* ======================================================
+   SLIDE 7: quiz
+   ====================================================== */
+const quizData = [
+  { q: '¿Qué comando utilizarías para crear un usuario en Linux?', opts: ['useradd', 'userdel', 'passwd', 'cd'], correct: 0 },
+  { q: '¿Qué opción de useradd crea el directorio home?', opts: ['-s', '-m', '-u', '-l'], correct: 1 },
+  { q: '¿Cuál es el equivalente de "useradd" en Windows PowerShell?', opts: ['New-LocalUser', 'Remove-LocalUser', 'Get-LocalUser', 'Rename-LocalUser'], correct: 0 }
+];
+let quizIndex = 0, quizScore = 0;
+const quizCard = document.getElementById('quiz-card');
+function renderQuiz(){
+  if(quizIndex >= quizData.length){
+    quizCard.innerHTML = `
+      <div class="quiz-progress">Resultado final</div>
+      <div class="quiz-q">¡Completaste el ejercicio!</div>
+      <div id="quiz-score">Puntaje: ${quizScore} / ${quizData.length}</div>
+      <button class="btn primary quiz-next" id="quiz-restart">Reintentar</button>
+    `;
+    document.getElementById('quiz-restart').addEventListener('click', () => { quizIndex = 0; quizScore = 0; renderQuiz(); });
+    return;
+  }
+  const item = quizData[quizIndex];
+  quizCard.innerHTML = `
+    <div class="quiz-progress">Pregunta ${quizIndex+1} de ${quizData.length}</div>
+    <div class="quiz-q">${item.q}</div>
+    <div class="quiz-opts">${item.opts.map((o,i) => `<button class="quiz-opt" data-i="${i}">${o}</button>`).join('')}</div>
+  `;
+  quizCard.querySelectorAll('.quiz-opt').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = Number(btn.dataset.i);
+      const opts = quizCard.querySelectorAll('.quiz-opt');
+      opts.forEach(o => o.classList.add('disabled'));
+      if(i === item.correct){ btn.classList.add('correct'); quizScore++; }
+      else { btn.classList.add('incorrect'); opts[item.correct].classList.add('correct'); }
+      const nextBtn = document.createElement('button');
+      nextBtn.className = 'btn primary quiz-next';
+      nextBtn.textContent = quizIndex === quizData.length - 1 ? 'Ver resultado' : 'Siguiente pregunta';
+      nextBtn.addEventListener('click', () => { quizIndex++; renderQuiz(); });
+      quizCard.appendChild(nextBtn);
+    });
+  });
+}
+renderQuiz();
+</script>
+</body>
+</html>
